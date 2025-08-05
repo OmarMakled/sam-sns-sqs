@@ -1,0 +1,120 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Testing stack - SNS to SQS to Lambda with filter policies
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 10
+    MemorySize: 128
+
+Resources:
+  AppCallTopic:
+    Type: AWS::SNS::Topic
+
+  AppCallLogsQueue:
+    Type: AWS::SQS::Queue
+
+  AppCallConversationQueue:
+    Type: AWS::SQS::Queue
+
+  AppCallLogsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref  AppCallLogsQueue
+      PolicyDocument:
+        Version: "2008-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt AppCallLogsQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref AppCallTopic
+
+  AppCallLogsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref  AppCallTopic
+      Protocol: sqs
+      Endpoint: !GetAtt AppCallLogsQueue.Arn
+      FilterPolicy:
+        queue:
+          - "log"
+      RawMessageDelivery: true
+
+  AppCallConversationQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref  AppCallConversationQueue
+      PolicyDocument:
+        Version: "2008-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt AppCallConversationQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref AppCallTopic
+
+  AppCallConversationSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref  AppCallTopic
+      Protocol: sqs
+      Endpoint: !GetAtt AppCallConversationQueue.Arn
+      FilterPolicy:
+        queue:
+          - "conversation"
+      RawMessageDelivery: true
+
+  LogsProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: logs.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt AppCallLogsQueue.Arn
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt  AppCallLogsQueue.Arn
+            BatchSize: 10
+
+  ConversationProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: conversation.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt AppCallConversationQueue.Arn
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt  AppCallConversationQueue.Arn
+            BatchSize: 10
+
+Outputs:
+  TopicArn:
+    Description: SNS Topic ARN
+    Value: !Ref AppCallTopic
